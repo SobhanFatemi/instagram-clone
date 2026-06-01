@@ -103,6 +103,8 @@ class StoryViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if not user.is_authenticated:
+            return Story.objects.none()
 
         queryset = active_stories_queryset().annotate(
             views_count=Count("views", distinct=True),
@@ -171,21 +173,18 @@ class StoryViewSet(viewsets.ModelViewSet):
 
             grouped[user_id]["stories"].append(story)
 
-        result = []
-        for item in grouped.values():
-            item["stories"] = StoryListSerializer(
-                item["stories"],
-                many=True,
-                context={"request": request},
-            ).data
-            result.append(item)
+        result = list(grouped.values())
 
         result.sort(
             key=lambda x: x["latest_story_created_at"],
             reverse=True,
         )
 
-        serializer = StoryGroupSerializer(result, many=True)
+        serializer = StoryGroupSerializer(
+            result,
+            many=True,
+            context={"request": request},
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def create(self, request, *args, **kwargs):
@@ -268,10 +267,11 @@ class StoryViewSet(viewsets.ModelViewSet):
     def mark_viewed(self, request, pk=None):
         story = self.get_object()
 
-        StoryView.objects.get_or_create(
-            story=story,
-            viewer=request.user,
-        )
+        if story.user_id != request.user.id:
+            StoryView.objects.get_or_create(
+                story=story,
+                viewer=request.user,
+            )
 
         return Response(
             {"detail": "Story marked as viewed."},

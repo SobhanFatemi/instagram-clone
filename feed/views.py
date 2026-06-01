@@ -8,7 +8,8 @@ from posts.serializers import PostSerializer
 from .serializers import FeedUserSerializer, HashtagSerializer
 from .services import (
     get_explore_queryset,
-    get_feed_queryset,
+    get_feed_post_ids,
+    get_feed_posts_by_ids,
     search_hashtags_queryset,
     search_posts_queryset,
     search_users_queryset,
@@ -26,18 +27,20 @@ class FeedListView(ListAPIView):
         responses={200: PostSerializer(many=True)},
     )
     def get(self, request, *args, **kwargs):
-        queryset = get_feed_queryset(request.user)
-        page = self.paginate_queryset(queryset)
+        post_ids = get_feed_post_ids(request.user)
+        page = self.paginate_queryset(post_ids)
         if page is not None:
+            posts = get_feed_posts_by_ids(page)
             serializer = self.get_serializer(
-                page,
+                posts,
                 many=True,
                 context={"request": request},
             )
             return self.get_paginated_response(serializer.data)
 
+        posts = get_feed_posts_by_ids(post_ids)
         serializer = self.get_serializer(
-            queryset,
+            posts,
             many=True,
             context={"request": request},
         )

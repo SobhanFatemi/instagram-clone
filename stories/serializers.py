@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Story, StoryComment, StoryView
@@ -111,6 +112,7 @@ class StoryCommentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "user_id", "username", "created_at", "replies"]
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_replies(self, obj):
         replies = obj.replies.filter(deleted_at__isnull=True).select_related("user")
         return StoryCommentSerializer(replies, many=True, context=self.context).data

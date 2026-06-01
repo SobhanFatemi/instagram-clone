@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Comment, Hashtag, Post, PostHashtag, PostMedia, SavedPost
@@ -22,14 +23,14 @@ class PostMediaSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def get_media(self, obj):
+    def get_media(self, obj) -> str | None:
         request = self.context.get("request")
         if not obj.media:
             return None
         url = obj.media.url
         return request.build_absolute_uri(url) if request else url
 
-    def get_thumbnail(self, obj):
+    def get_thumbnail(self, obj) -> str | None:
         request = self.context.get("request")
         if not obj.thumbnail:
             return None
@@ -69,7 +70,7 @@ class PostSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_author_display_name(self, obj):
+    def get_author_display_name(self, obj) -> str:
         profile = getattr(obj.author, "profile", None)
         if profile and profile.display_name:
             return profile.display_name
@@ -78,7 +79,7 @@ class PostSerializer(serializers.ModelSerializer):
         full_name = f"{user.first_name} {user.last_name}".strip()
         return full_name if full_name else user.username
 
-    def get_author_avatar(self, obj):
+    def get_author_avatar(self, obj) -> str | None:
         request = self.context.get("request")
         profile = getattr(obj.author, "profile", None)
 
@@ -88,19 +89,19 @@ class PostSerializer(serializers.ModelSerializer):
         url = profile.avatar.url
         return request.build_absolute_uri(url) if request else url
 
-    def get_is_liked(self, obj):
+    def get_is_liked(self, obj) -> bool:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
         return obj.likes.filter(user=request.user).exists()
 
-    def get_is_saved(self, obj):
+    def get_is_saved(self, obj) -> bool:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
         return obj.saved_by.filter(user=request.user).exists()
     
-    def get_hashtags(self, obj):
+    def get_hashtags(self, obj) -> list[str]:
         return list(
             obj.post_hashtags
             .select_related("hashtag")
@@ -273,11 +274,11 @@ class CommentAuthorSerializer(serializers.Serializer):
     display_name = serializers.SerializerMethodField()
     avatar = serializers.SerializerMethodField()
 
-    def get_display_name(self, obj):
+    def get_display_name(self, obj) -> str:
         profile = getattr(obj, "profile", None)
         return profile.display_name if profile else ""
 
-    def get_avatar(self, obj):
+    def get_avatar(self, obj) -> str | None:
         request = self.context.get("request")
         profile = getattr(obj, "profile", None)
 
@@ -307,12 +308,14 @@ class CommentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(CommentAuthorSerializer)
     def get_author(self, obj):
         return CommentAuthorSerializer(
             obj.user,
             context=self.context,
         ).data
 
+    @extend_schema_field(serializers.ListField(child=serializers.DictField()))
     def get_replies(self, obj):
         if obj.parent_id is not None:
             return []

@@ -15,7 +15,7 @@ def send_otp(channel, target_value, code):
             code=code,
         )
 
-    if channel == "sms":
+    if channel == "phone":
         return send_otp_sms(
             phone_number=target_value,
             code=code,
@@ -28,18 +28,18 @@ def send_otp_email(email, code):
     subject = "Your verification code"
     message = f"Your verification code is: {code}"
 
-    send_mail(
+    sent = send_mail(
         subject=subject,
         message=message,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[email],
-        fail_silently=False,
+        fail_silently=settings.DEBUG,
     )
 
     return {
         "channel": "email",
         "target": email,
-        "sent": True,
+        "sent": bool(sent),
     }
 
 

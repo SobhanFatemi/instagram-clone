@@ -1,3 +1,5 @@
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Notification
@@ -9,13 +11,13 @@ class NotificationActorSerializer(serializers.Serializer):
     display_name = serializers.SerializerMethodField()
     avatar = serializers.SerializerMethodField()
 
-    def get_display_name(self, obj):
+    def get_display_name(self, obj) -> str:
         profile = getattr(obj, "profile", None)
         if profile and hasattr(profile, "display_name"):
             return profile.display_name
         return obj.username
 
-    def get_avatar(self, obj):
+    def get_avatar(self, obj) -> str | None:
         request = self.context.get("request")
         profile = getattr(obj, "profile", None)
 
@@ -60,6 +62,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    @extend_schema_field(NotificationActorSerializer)
     def get_actor(self, obj):
         if not obj.actor:
             return None
@@ -69,6 +72,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             context=self.context,
         ).data
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_target(self, obj):
         if not obj.target_content_type or not obj.target_object_id:
             return None

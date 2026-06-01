@@ -2,7 +2,12 @@ from rest_framework import serializers
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError as DjangoValidationError
 
-from .models import AuthOTP, User
+from .models import User
+from accounts.services.otp_service import (
+    CHANNEL_CHOICES,
+    CHANNEL_EMAIL,
+    CHANNEL_PHONE,
+)
 
 
 def validate_phone_number(value):
@@ -33,14 +38,14 @@ def validate_otp_code(value):
 
 
 class RequestOTPSerializer(serializers.Serializer):
-    channel = serializers.ChoiceField(choices=AuthOTP.CHANNEL_CHOICES)
+    channel = serializers.ChoiceField(choices=CHANNEL_CHOICES)
     target_value = serializers.CharField(max_length=255)
 
     def validate(self, attrs):
         channel = attrs["channel"]
         target_value = attrs["target_value"].strip()
 
-        if channel == AuthOTP.CHANNEL_EMAIL:
+        if channel == CHANNEL_EMAIL:
             try:
                 validate_email(target_value)
             except DjangoValidationError:
@@ -50,7 +55,7 @@ class RequestOTPSerializer(serializers.Serializer):
 
             target_value = target_value.lower()
 
-        elif channel == AuthOTP.CHANNEL_PHONE:
+        elif channel == CHANNEL_PHONE:
             try:
                 target_value = validate_phone_number(target_value)
             except serializers.ValidationError as e:
@@ -63,7 +68,7 @@ class RequestOTPSerializer(serializers.Serializer):
 
 
 class VerifyOTPSerializer(serializers.Serializer):
-    channel = serializers.ChoiceField(choices=AuthOTP.CHANNEL_CHOICES)
+    channel = serializers.ChoiceField(choices=CHANNEL_CHOICES)
     target_value = serializers.CharField(max_length=255)
     code = serializers.CharField(max_length=10)
 
@@ -72,7 +77,7 @@ class VerifyOTPSerializer(serializers.Serializer):
         target_value = attrs["target_value"].strip()
         code = attrs["code"].strip()
 
-        if channel == AuthOTP.CHANNEL_EMAIL:
+        if channel == CHANNEL_EMAIL:
             try:
                 validate_email(target_value)
             except DjangoValidationError:
@@ -82,12 +87,104 @@ class VerifyOTPSerializer(serializers.Serializer):
 
             target_value = target_value.lower()
 
-        elif channel == AuthOTP.CHANNEL_PHONE:
+        elif channel == CHANNEL_PHONE:
             try:
                 target_value = validate_phone_number(target_value)
             except serializers.ValidationError as e:
                 raise serializers.ValidationError({
                     "target_value": e.detail
+                })
+
+        try:
+            code = validate_otp_code(code)
+        except serializers.ValidationError as e:
+            raise serializers.ValidationError({
+                "code": e.detail
+            })
+
+        attrs["target_value"] = target_value
+        attrs["code"] = code
+        return attrs
+
+
+class AddContactOTPRequestSerializer(serializers.Serializer):
+    channel = serializers.ChoiceField(choices=CHANNEL_CHOICES)
+    target_value = serializers.CharField(max_length=255)
+
+    def validate(self, attrs):
+        channel = attrs["channel"]
+        target_value = attrs["target_value"].strip()
+        user = self.context["request"].user
+
+        if channel == CHANNEL_EMAIL:
+            try:
+                validate_email(target_value)
+            except DjangoValidationError:
+                raise serializers.ValidationError({
+                    "target_value": "Enter a valid email address."
+                })
+
+            target_value = target_value.lower()
+
+            if User.objects.filter(email__iexact=target_value).exclude(id=user.id).exists():
+                raise serializers.ValidationError({
+                    "target_value": "This email is already in use."
+                })
+
+        elif channel == CHANNEL_PHONE:
+            try:
+                target_value = validate_phone_number(target_value)
+            except serializers.ValidationError as e:
+                raise serializers.ValidationError({
+                    "target_value": e.detail
+                })
+
+            if User.objects.filter(phone_number=target_value).exclude(id=user.id).exists():
+                raise serializers.ValidationError({
+                    "target_value": "This phone number is already in use."
+                })
+
+        attrs["target_value"] = target_value
+        return attrs
+
+
+class AddContactOTPVerifySerializer(serializers.Serializer):
+    channel = serializers.ChoiceField(choices=CHANNEL_CHOICES)
+    target_value = serializers.CharField(max_length=255)
+    code = serializers.CharField(max_length=10)
+
+    def validate(self, attrs):
+        channel = attrs["channel"]
+        target_value = attrs["target_value"].strip()
+        code = attrs["code"].strip()
+        user = self.context["request"].user
+
+        if channel == CHANNEL_EMAIL:
+            try:
+                validate_email(target_value)
+            except DjangoValidationError:
+                raise serializers.ValidationError({
+                    "target_value": "Enter a valid email address."
+                })
+
+            target_value = target_value.lower()
+
+            if User.objects.filter(email__iexact=target_value).exclude(id=user.id).exists():
+                raise serializers.ValidationError({
+                    "target_value": "This email is already in use."
+                })
+
+        elif channel == CHANNEL_PHONE:
+            try:
+                target_value = validate_phone_number(target_value)
+            except serializers.ValidationError as e:
+                raise serializers.ValidationError({
+                    "target_value": e.detail
+                })
+
+            if User.objects.filter(phone_number=target_value).exclude(id=user.id).exists():
+                raise serializers.ValidationError({
+                    "target_value": "This phone number is already in use."
                 })
 
         try:
@@ -129,6 +226,7 @@ class MeResponseSerializer(serializers.Serializer):
     email = serializers.EmailField(allow_null=True, required=False)
     phone_number = serializers.CharField(allow_null=True, required=False)
     is_active = serializers.BooleanField()
+    is_generated_username = serializers.BooleanField(required=False)
 
 
 class MeUpdateSerializer(serializers.Serializer):

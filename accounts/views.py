@@ -1,3 +1,4 @@
+from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -6,10 +7,12 @@ from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 
-from accounts.models import AuthOTP, User
+from accounts.models import User
 from accounts.serializers import (
     RequestOTPSerializer,
     VerifyOTPSerializer,
+    AddContactOTPRequestSerializer,
+    AddContactOTPVerifySerializer,
     LogoutSerializer,
     TokenRefreshRequestSerializer,
     TokenRefreshResponseSerializer,
@@ -24,6 +27,18 @@ from accounts.services.otp_service import (
     create_otp,
     verify_otp,
     OTPError,
+    OTPCooldownError,
+    CHANNEL_EMAIL,
+    CHANNEL_PHONE,
+    PURPOSE_LOGIN,
+    PURPOSE_SIGNUP,
+    PURPOSE_ADD_EMAIL,
+    PURPOSE_ADD_PHONE,
+)
+from accounts.services.rate_limit_service import (
+    RateLimitError,
+    check_login_rate_limit,
+    check_signup_rate_limit,
 )
 from accounts.services.notification_service import send_otp
 from accounts.services.auth_service import (
@@ -31,7 +46,11 @@ from accounts.services.auth_service import (
     get_or_create_user_for_phone_number,
 )
 from accounts.services.token_service import create_tokens_for_user
-from accounts.services.user_service import build_me_response
+from accounts.services.user_service import (
+    build_me_response,
+    set_user_email,
+    set_user_phone_number,
+)
 
 
 
@@ -83,37 +102,56 @@ class RequestOTPView(APIView):
         channel = serializer.validated_data["channel"]
         target_value = serializer.validated_data["target_value"].strip()
 
-        if channel == AuthOTP.CHANNEL_EMAIL:
+        if channel == CHANNEL_EMAIL:
             target_value = target_value.lower()
             user = User.objects.filter(email__iexact=target_value).first()
         else:
             user = User.objects.filter(phone_number=target_value).first()
 
         if user:
-            purpose = AuthOTP.PURPOSE_LOGIN
+            purpose = PURPOSE_LOGIN
         else:
-            purpose = AuthOTP.PURPOSE_SIGNUP
+            purpose = PURPOSE_SIGNUP
 
-        otp = create_otp(
-            user=user,
-            channel=channel,
-            purpose=purpose,
-            target_value=target_value,
-        )
+        identifier = request.META.get("REMOTE_ADDR", "unknown")
+
+        try:
+            if purpose == PURPOSE_LOGIN:
+                check_login_rate_limit(identifier)
+            else:
+                check_signup_rate_limit(identifier)
+        except RateLimitError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        try:
+            code = create_otp(
+                channel=channel,
+                target_value=target_value,
+            )
+        except OTPCooldownError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         send_otp(
             channel=channel,
             target_value=target_value,
-            code=otp.code,
+            code=code,
         )
 
-        return Response(
-            {
-                "detail": "OTP sent successfully.",
-                "purpose": purpose,
-            },
-            status=status.HTTP_200_OK,
-        )
+        response_data = {
+            "detail": "OTP sent successfully.",
+            "purpose": purpose,
+        }
+
+        if settings.DEBUG:
+            response_data["dev_code"] = code
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class VerifyOTPView(APIView):
@@ -137,13 +175,12 @@ class VerifyOTPView(APIView):
         target_value = serializer.validated_data["target_value"].strip()
         code = serializer.validated_data["code"]
 
-        if channel == AuthOTP.CHANNEL_EMAIL:
+        if channel == CHANNEL_EMAIL:
             target_value = target_value.lower()
 
         try:
             verify_otp(
                 channel=channel,
-                purpose=AuthOTP.PURPOSE_LOGIN,
                 target_value=target_value,
                 code=code,
             )
@@ -153,10 +190,14 @@ class VerifyOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if channel == AuthOTP.CHANNEL_EMAIL:
+        if channel == CHANNEL_EMAIL:
             user = get_or_create_user_for_email(target_value)
-        elif channel == AuthOTP.CHANNEL_PHONE:
+            user.is_email_verified = True
+            user.save(update_fields=["is_email_verified"])
+        elif channel == CHANNEL_PHONE:
             user = get_or_create_user_for_phone_number(target_value)
+            user.is_phone_verified = True
+            user.save(update_fields=["is_phone_verified"])
         else:
             return Response(
                 {"detail": "Invalid OTP channel."},
@@ -177,6 +218,111 @@ class VerifyOTPView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class RequestContactOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AddContactOTPRequestSerializer
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="Request OTP to add or change email or phone",
+        request=AddContactOTPRequestSerializer,
+        responses={
+            200: DetailResponseSerializer,
+            400: OpenApiResponse(description="Bad request"),
+        },
+    )
+    def post(self, request):
+        serializer = self.serializer_class(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        channel = serializer.validated_data["channel"]
+        target_value = serializer.validated_data["target_value"]
+
+        if channel == CHANNEL_EMAIL:
+            purpose = PURPOSE_ADD_EMAIL
+        else:
+            purpose = PURPOSE_ADD_PHONE
+
+        try:
+            code = create_otp(
+                channel=purpose,
+                target_value=target_value,
+            )
+        except OTPCooldownError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        send_otp(
+            channel=channel,
+            target_value=target_value,
+            code=code,
+        )
+
+        response_data = {
+            "detail": "OTP sent successfully.",
+            "purpose": purpose,
+        }
+
+        if settings.DEBUG:
+            response_data["dev_code"] = code
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class VerifyContactOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = AddContactOTPVerifySerializer
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="Verify OTP to add or change email or phone",
+        request=AddContactOTPVerifySerializer,
+        responses={
+            200: MeResponseSerializer,
+            400: OpenApiResponse(description="Bad request"),
+        },
+    )
+    def post(self, request):
+        serializer = self.serializer_class(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        channel = serializer.validated_data["channel"]
+        target_value = serializer.validated_data["target_value"]
+        code = serializer.validated_data["code"]
+
+        if channel == CHANNEL_EMAIL:
+            purpose = PURPOSE_ADD_EMAIL
+        else:
+            purpose = PURPOSE_ADD_PHONE
+
+        try:
+            verify_otp(
+                channel=purpose,
+                target_value=target_value,
+                code=code,
+            )
+        except OTPError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if channel == CHANNEL_EMAIL:
+            set_user_email(request.user, target_value)
+        else:
+            set_user_phone_number(request.user, target_value)
+
+        return Response(build_me_response(request.user), status=status.HTTP_200_OK)
 
 
 class LogoutView(APIView):

@@ -23,13 +23,13 @@ class FeedUserSerializer(serializers.ModelSerializer):
             "avatar",
         ]
 
-    def get_display_name(self, obj):
+    def get_display_name(self, obj) -> str:
         profile = getattr(obj, "profile", None)
         if profile and getattr(profile, "display_name", None):
             return profile.display_name
         return f"{obj.first_name} {obj.last_name}".strip()
 
-    def get_avatar(self, obj):
+    def get_avatar(self, obj) -> str | None:
         request = self.context.get("request")
         profile = getattr(obj, "profile", None)
 
@@ -54,5 +54,5 @@ class HashtagSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    def get_posts_count(self, obj):
+    def get_posts_count(self, obj) -> int:
         return obj.hashtag_posts.filter(post__deleted_at__isnull=True).count()

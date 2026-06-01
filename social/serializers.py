@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
+from . import services
 from .models import Follow, Block
 
 
@@ -28,13 +29,13 @@ class BasicUserSerializer(serializers.ModelSerializer):
             "has_blocked_me",
         ]
 
-    def get_followers_count(self, obj):
-        return Follow.objects.filter(following=obj).count()
+    def get_followers_count(self, obj) -> int:
+        return services.get_followers_count(obj)
 
-    def get_following_count(self, obj):
-        return Follow.objects.filter(follower=obj).count()
+    def get_following_count(self, obj) -> int:
+        return services.get_following_count(obj)
 
-    def get_is_following(self, obj):
+    def get_is_following(self, obj) -> bool:
         request = self.context.get("request")
 
         if not request or not request.user.is_authenticated:
@@ -45,7 +46,7 @@ class BasicUserSerializer(serializers.ModelSerializer):
             following=obj,
         ).exists()
 
-    def get_is_blocked(self, obj):
+    def get_is_blocked(self, obj) -> bool:
         request = self.context.get("request")
 
         if not request or not request.user.is_authenticated:
@@ -56,7 +57,7 @@ class BasicUserSerializer(serializers.ModelSerializer):
             blocked=obj,
         ).exists()
 
-    def get_has_blocked_me(self, obj):
+    def get_has_blocked_me(self, obj) -> bool:
         request = self.context.get("request")
 
         if not request or not request.user.is_authenticated:

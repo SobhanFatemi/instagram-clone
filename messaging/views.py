@@ -10,9 +10,11 @@ from rest_framework.response import Response
 
 from drf_spectacular.utils import (
     OpenApiExample,
+    OpenApiParameter,
     OpenApiResponse,
     OpenApiRequest,
     extend_schema,
+    extend_schema_serializer,
     extend_schema_view,
 )
 
@@ -33,6 +35,7 @@ from .serializers import (
 )
 
 
+@extend_schema_serializer(component_name="MessagingDetailResponse")
 class DetailResponseSerializer(serializers.Serializer):
     detail = serializers.CharField()
 
@@ -104,8 +107,18 @@ SEND_MESSAGE_MULTIPART_REQUEST_SCHEMA = {
         summary="List my conversations",
         description=(
             "Returns all conversations where the authenticated user is a participant. "
-            "Hidden conversations are excluded."
+            "Hidden conversations are excluded by default. "
+            "Pass `hidden=true` to return only the conversations the authenticated user has hidden."
         ),
+        parameters=[
+            OpenApiParameter(
+                name="hidden",
+                type=bool,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="When true, returns only conversations hidden by the authenticated user.",
+            ),
+        ],
         responses={
             200: OpenApiResponse(
                 response=ConversationSerializer(many=True),
@@ -136,12 +149,22 @@ class ConversationViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return (
+        queryset = (
             Conversation.objects.filter(participants__user=user)
-            .exclude(participants__user=user, participants__hidden_at__isnull=False)
-            .prefetch_related("participants__user")
+            .prefetch_related("participants__user__profile")
             .distinct()
             .order_by("-last_message_at", "-created_at")
+        )
+
+        if self.action == "list" and self.request.query_params.get("hidden") == "true":
+            return queryset.filter(
+                participants__user=user,
+                participants__hidden_at__isnull=False,
+            )
+
+        return queryset.exclude(
+            participants__user=user,
+            participants__hidden_at__isnull=False,
         )
 
     def get_serializer_class(self):
@@ -463,7 +486,7 @@ class ConversationViewSet(viewsets.GenericViewSet):
                 user_states__user=request.user,
                 user_states__deleted_for_me_at__isnull=False,
             )
-            .select_related("sender", "conversation", "story")
+            .select_related("sender", "sender__profile", "conversation", "story")
             .prefetch_related("recipient_statuses__user")
             .order_by("created_at")
         )
@@ -565,7 +588,7 @@ class MessageViewSet(viewsets.GenericViewSet):
                 user_states__user=self.request.user,
                 user_states__deleted_for_me_at__isnull=False,
             )
-            .select_related("sender", "conversation", "story")
+            .select_related("sender", "sender__profile", "conversation", "story")
             .prefetch_related("recipient_statuses__user")
             .distinct()
         )

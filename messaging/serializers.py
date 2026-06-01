@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import OuterRef, Subquery, Q
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field, extend_schema_serializer
 from rest_framework import serializers
 
 from social.models import Block
@@ -16,10 +17,37 @@ from .models import (
 User = get_user_model()
 
 
+@extend_schema_serializer(component_name="MessagingBasicUser")
 class BasicUserSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+    avatar = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ["id"]
+        fields = ["id", "username", "display_name", "avatar"]
+
+    def get_display_name(self, obj) -> str:
+        profile = getattr(obj, "profile", None)
+        if profile and hasattr(profile, "display_name"):
+            return profile.display_name
+        return obj.username
+
+    def get_avatar(self, obj) -> str | None:
+        request = self.context.get("request")
+        profile = getattr(obj, "profile", None)
+
+        if not profile or not hasattr(profile, "avatar") or not profile.avatar:
+            return None
+
+        try:
+            url = profile.avatar.url
+        except Exception:
+            return None
+
+        if request:
+            return request.build_absolute_uri(url)
+
+        return url
 
 
 class ConversationParticipantSerializer(serializers.ModelSerializer):
@@ -87,7 +115,7 @@ class MessageSerializer(serializers.ModelSerializer):
             "is_deleted_for_me",
         ]
 
-    def get_is_deleted_for_me(self, obj):
+    def get_is_deleted_for_me(self, obj) -> bool:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return False
@@ -131,6 +159,7 @@ class SendMessageSerializer(serializers.ModelSerializer):
             .values_list("user_id", flat=True)
         )
 
+        is_blocked = False
         if participant_ids:
             is_blocked = Block.objects.filter(
                 Q(blocker_id=user.id, blocked_id__in=participant_ids) |
@@ -218,9 +247,12 @@ class ConversationSerializer(serializers.ModelSerializer):
             "unread_count",
         ]
 
+    @extend_schema_field(MessageSerializer)
     def get_last_message(self, obj):
         request = self.context.get("request")
-        qs = obj.messages.filter(deleted_at__isnull=True).order_by("-created_at")
+        qs = obj.messages.filter(
+            deleted_at__isnull=True
+        ).select_related("sender", "sender__profile").order_by("-created_at")
         if request and request.user.is_authenticated:
             qs = qs.exclude(
                 user_states__user=request.user,
@@ -231,7 +263,7 @@ class ConversationSerializer(serializers.ModelSerializer):
             return None
         return MessageSerializer(message, context=self.context).data
 
-    def get_unread_count(self, obj):
+    def get_unread_count(self, obj) -> int:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return 0

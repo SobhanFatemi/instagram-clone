@@ -1,4 +1,5 @@
 import random
+import re
 import string
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,8 @@ from django.db import transaction
 from profiles.models import Profile
 
 User = get_user_model()
+
+GENERATED_USERNAME_PATTERN = re.compile(r"^user_\d{6}$")
 
 
 def user_has_field(field_name):
@@ -18,6 +21,10 @@ def generate_unique_username():
         candidate = "user_" + "".join(random.choices(string.digits, k=6))
         if not User.objects.filter(username__iexact=candidate).exists():
             return candidate
+
+
+def is_generated_username(username):
+    return bool(username and GENERATED_USERNAME_PATTERN.match(username))
 
 
 def build_user_defaults(identifier):

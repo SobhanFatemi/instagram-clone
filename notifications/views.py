@@ -45,9 +45,13 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return Notification.objects.none()
+
         return (
             Notification.objects
-            .filter(recipient=self.request.user)
+            .filter(recipient=user)
             .select_related(
                 "recipient",
                 "actor",

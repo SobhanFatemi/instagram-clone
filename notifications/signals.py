@@ -99,7 +99,7 @@ def create_message_notification(sender, instance, created, **kwargs):
     if conversation.conversation_type == Conversation.TYPE_DIRECT:
         text = f"{sender_user.username} sent you a message."
     else:
-        group_name = conversation.name or "the group"
+        group_name = conversation.title or "the group"
         text = f"{sender_user.username} sent a message in {group_name}."
 
     for participant in participants:

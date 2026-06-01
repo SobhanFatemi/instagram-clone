@@ -109,9 +109,16 @@ cython_debug/
 venv/
 ENV/
 env/
+.venv/
 
 # Personal notes
 notes_to_self/
 
 # Secrets / environment variables
 .env
+
+# Node / frontend dependencies and build output
+node_modules/
+
+# Media (user uploads and seeded demo files)
+/media/

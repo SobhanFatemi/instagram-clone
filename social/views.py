@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import services
 from .models import Follow, Block
 from .serializers import (
     BasicUserSerializer,
@@ -51,6 +52,7 @@ class SocialViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=["Follow"],
         summary="Follow user",
+        request=None,
         responses={
             201: FollowSerializer,
             200: SocialActionResponseSerializer,
@@ -90,6 +92,8 @@ class SocialViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        services.invalidate_follow_counts(request.user, target_user)
+
         serializer = FollowSerializer(
             follow,
             context={"request": request},
@@ -99,6 +103,7 @@ class SocialViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=["Follow"],
         summary="Unfollow user",
+        request=None,
         responses={
             200: SocialActionResponseSerializer,
             404: SocialActionResponseSerializer,
@@ -120,6 +125,8 @@ class SocialViewSet(viewsets.ViewSet):
             )
 
         follow.delete()
+
+        services.invalidate_follow_counts(request.user, target_user)
 
         return Response(
             {"detail": "User unfollowed successfully."},
@@ -272,6 +279,7 @@ class SocialViewSet(viewsets.ViewSet):
         tags=["Block"],
         summary="Block user",
         description="Blocking removes follow relations between both users.",
+        request=None,
         responses={
             201: BlockSerializer,
             200: SocialActionResponseSerializer,
@@ -298,6 +306,8 @@ class SocialViewSet(viewsets.ViewSet):
             | Q(follower=target_user, following=request.user)
         ).delete()
 
+        services.invalidate_follow_counts(request.user, target_user)
+
         if not created:
             return Response(
                 {"detail": "You have already blocked this user."},
@@ -313,6 +323,7 @@ class SocialViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=["Block"],
         summary="Unblock user",
+        request=None,
         responses={
             200: SocialActionResponseSerializer,
             404: SocialActionResponseSerializer,

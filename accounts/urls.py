@@ -1,12 +1,15 @@
 from django.urls import path
 
-from accounts.views import RequestOTPView, VerifyOTPView, LogoutView, MeView, CustomTokenRefreshView, CustomTokenVerifyView
+from accounts.views import RequestOTPView, VerifyOTPView, RequestContactOTPView, VerifyContactOTPView, LogoutView, MeView, CustomTokenRefreshView, CustomTokenVerifyView
 
 app_name = "accounts"
 
 urlpatterns = [
     path('otp/request/', RequestOTPView.as_view(), name='otp-request'),
     path('otp/verify/', VerifyOTPView.as_view(), name='otp-verify'),
+
+    path('contact/request/', RequestContactOTPView.as_view(), name='contact-otp-request'),
+    path('contact/verify/', VerifyContactOTPView.as_view(), name='contact-otp-verify'),
 
     path("token/refresh/", CustomTokenRefreshView.as_view(), name="token_refresh"),
     path("token/verify/", CustomTokenVerifyView.as_view(), name="token_verify"),

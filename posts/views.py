@@ -1,14 +1,21 @@
+from django.core.cache import cache
 from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiTypes,
+    extend_schema,
+    extend_schema_view,
+)
 from rest_framework import generics, permissions, status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from feed.services import invalidate_feed_cache
 from social.models import Block
 
 from .models import Comment, Post, PostLike, SavedPost
@@ -21,6 +28,9 @@ from .serializers import (
     PostSerializer,
     SavedPostSerializer,
 )
+
+
+POST_VIEW_DEDUP_SECONDS = 60 * 60 * 6
 
 
 POST_MULTIPART_REQUEST_SCHEMA = {
@@ -73,6 +83,15 @@ def exclude_blocked_users_from_posts_queryset(queryset, user):
     list=extend_schema(
         tags=["Posts"],
         summary="List posts",
+        parameters=[
+            OpenApiParameter(
+                name="author",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Filter posts by author user id",
+            ),
+        ],
         responses={200: PostSerializer(many=True)},
     ),
     retrieve=extend_schema(
@@ -120,6 +139,10 @@ class PostViewSet(viewsets.ModelViewSet):
             .order_by("-created_at")
         )
 
+        author_id = self.request.query_params.get("author")
+        if author_id:
+            queryset = queryset.filter(author_id=author_id)
+
         return exclude_blocked_users_from_posts_queryset(
             queryset=queryset,
             user=self.request.user,
@@ -135,14 +158,25 @@ class PostViewSet(viewsets.ModelViewSet):
         context["request"] = self.request
         return context
 
+    def _viewer_key(self, request):
+        if request.user and request.user.is_authenticated:
+            return "user:%s" % request.user.id
+        return "ip:%s" % request.META.get("REMOTE_ADDR", "anonymous")
+
     def retrieve(self, request, *args, **kwargs):
         post = self.get_object()
 
-        Post.objects.filter(pk=post.pk).update(
-            view_count=F("view_count") + 1,
+        is_author = (
+            request.user.is_authenticated
+            and request.user.id == post.author_id
         )
 
-        post.refresh_from_db(fields=["view_count"])
+        cache_key = "post_view:%s:%s" % (post.pk, self._viewer_key(request))
+        if not is_author and cache.add(cache_key, 1, POST_VIEW_DEDUP_SECONDS):
+            Post.objects.filter(pk=post.pk).update(
+                view_count=F("view_count") + 1,
+            )
+            post.refresh_from_db(fields=["view_count"])
 
         serializer = PostSerializer(
             post,
@@ -166,6 +200,7 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         post = serializer.save(author=request.user)
+        invalidate_feed_cache(request.user)
 
         output_serializer = PostSerializer(
             post,
@@ -202,6 +237,7 @@ class PostViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         post = self.get_object()
         post.delete()
+        invalidate_feed_cache(request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -212,6 +248,7 @@ class SavePostView(APIView):
         tags=["Saved Posts"],
         summary="Save a post",
         description="Save a post for the authenticated user.",
+        request=None,
         responses={201: {"type": "object", "properties": {"detail": {"type": "string"}}}},
     )
     def post(self, request, post_id):
@@ -271,6 +308,7 @@ class LikePostView(APIView):
     @extend_schema(
         tags=["Likes"],
         summary="Like a post",
+        request=None,
         responses={201: {"type": "object", "properties": {"detail": {"type": "string"}}}},
     )
     def post(self, request, post_id):
